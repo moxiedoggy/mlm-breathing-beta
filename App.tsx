@@ -424,14 +424,14 @@ function Session({
     }).start();
   }, [status, stepIndex, gettingReady]);
 
-  const rest = () => {
+  const rest = (to: number = SMALL) => {
     size.stopAnimation();
-    Animated.timing(size, { toValue: SMALL, duration: 500, useNativeDriver: false }).start();
+    Animated.timing(size, { toValue: to, duration: 500, useNativeDriver: false }).start();
   };
 
   useEffect(() => {
     if (status === 'done') {
-      rest();
+      rest(1); // full-size circle so the finish text fits inside it
       say('close');
       onComplete();
     }
@@ -441,6 +441,7 @@ function Session({
     // Opening sequence (voice on): announcement, get-ready line, three tones, intro line.
     let lead = 0;
     schedule.current = [];
+    rest(); // back to the small circle before the first breath in
     if (hasVoice) {
       const announce = ANNOUNCE[exercise.id]?.[duration];
       const tSetup = (announce ? announce.len : 0) + 0.4;
@@ -743,12 +744,12 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   circle: { position: 'absolute', width: 224, height: 224, borderRadius: 112, opacity: 0.92 },
-  center: { alignItems: 'center' },
+  center: { alignItems: 'center', maxWidth: 190 },
   stepLabel: { color: TEXT, fontSize: 20, fontWeight: '700', letterSpacing: 0.5 },
   count: { color: TEXT, fontSize: 40, fontWeight: '800', marginTop: 2 },
   doneSub: { color: TEXT, fontSize: 15, marginTop: 4, opacity: 0.9 },
 
-  doneStreak: { color: TEXT, fontSize: 13, fontWeight: '700', marginTop: 6 },
+  doneStreak: { color: TEXT, fontSize: 13, fontWeight: '700', marginTop: 6, textAlign: 'center' },
 
   pattern: { color: MUTED, fontSize: 14, marginTop: 20 },
 
