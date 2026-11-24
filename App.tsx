@@ -3,6 +3,7 @@ import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle } from 'react-native-svg';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ---------------------------------------------------------------------------
 // Exercises. Everything Brandon may want to change lives in this one list:
@@ -25,8 +26,17 @@ type Exercise = {
 
 // Short voice clips. They are separate so the voice stays in step with the circle
 // at any session length. leadIn = seconds of "get ready" while the opening line plays.
-type VoiceClip = 'intro' | 'in' | 'out' | 'mid' | 'close';
-type Voice = { leadIn: number; clips: Record<VoiceClip, number> };
+type VoiceClip = 'intro' | 'in' | 'out' | 'hold' | 'mid' | 'close';
+type Voice = { leadIn: number; intro: number; close: number };
+
+// Cues every exercise shares.
+const CUES = {
+  in: require('./assets/voice/in.mp3'),
+  out: require('./assets/voice/out.mp3'),
+  hold: require('./assets/voice/hold.mp3'),
+  mid: require('./assets/voice/mid.mp3'),
+};
+const VOICE_VOLUME = 0.85; // a touch under full so the voice sits softly
 
 const QUICK_RESET: Exercise = {
   id: 'blb',
@@ -35,14 +45,9 @@ const QUICK_RESET: Exercise = {
   pattern: 'In 4 · Out 6',
   color: '#E5484D',
   voice: {
-    leadIn: 7,
-    clips: {
-      intro: require('./assets/voice/blb-intro.mp3'),
-      in: require('./assets/voice/blb-in.mp3'),
-      out: require('./assets/voice/blb-out.mp3'),
-      mid: require('./assets/voice/blb-mid.mp3'),
-      close: require('./assets/voice/blb-close.mp3'),
-    },
+    leadIn: 8.5,
+    intro: require('./assets/voice/blb-intro.mp3'),
+    close: require('./assets/voice/blb-close.mp3'),
   },
   steps: [
     { label: 'Breathe in', seconds: 4, move: 'grow' },
@@ -53,6 +58,11 @@ const QUICK_RESET: Exercise = {
 const EXERCISES: Exercise[] = [
   {
     id: 'focused',
+    voice: {
+      leadIn: 9.5,
+      intro: require('./assets/voice/focused-intro.mp3'),
+      close: require('./assets/voice/focused-close.mp3'),
+    },
     name: 'Focused',
     tagline: 'Lock into the present',
     pattern: 'Box breathing · 4-4-4-4',
@@ -66,6 +76,11 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'calm',
+    voice: {
+      leadIn: 7,
+      intro: require('./assets/voice/calm-intro.mp3'),
+      close: require('./assets/voice/calm-close.mp3'),
+    },
     name: 'Calm',
     tagline: 'Reset under pressure',
     pattern: 'Long exhale · In 4 · Out 6',
@@ -77,6 +92,11 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'energized',
+    voice: {
+      leadIn: 8,
+      intro: require('./assets/voice/energized-intro.mp3'),
+      close: require('./assets/voice/energized-close.mp3'),
+    },
     name: 'Energized',
     tagline: 'Get ready to compete',
     pattern: 'Quick rhythm · In 3 · Out 3',
@@ -92,6 +112,11 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'recovered',
+    voice: {
+      leadIn: 6,
+      intro: require('./assets/voice/recovered-intro.mp3'),
+      close: require('./assets/voice/recovered-close.mp3'),
+    },
     name: 'Recovered',
     tagline: 'Wind down and recharge',
     pattern: 'Slow breath · In 5 · Out 5',
@@ -121,6 +146,47 @@ const RING_R = 138;
 const RING_STROKE = 6;
 const RING_LEN = 2 * Math.PI * RING_R;
 
+// ---------------------------------------------------------------------------
+// Streak: days in a row with at least one finished session. Saved on this
+// device for the beta; the real app will save it to the member's account.
+// ---------------------------------------------------------------------------
+type Streak = { count: number; lastDay: string };
+const STREAK_KEY = 'breathgym.streak';
+const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = () => dayKey(new Date());
+const yesterday = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return dayKey(d);
+};
+// A streak only counts if the last session was today or yesterday.
+const liveCount = (s: Streak | null) =>
+  s && (s.lastDay === today() || s.lastDay === yesterday()) ? s.count : 0;
+async function loadStreak(): Promise<Streak | null> {
+  try {
+    const raw = await AsyncStorage.getItem(STREAK_KEY);
+    return raw ? (JSON.parse(raw) as Streak) : null;
+  } catch {
+    return null;
+  }
+}
+async function recordSession(): Promise<Streak> {
+  const prev = await loadStreak();
+  let next: Streak;
+  if (prev && prev.lastDay === today()) next = prev;
+  else if (prev && prev.lastDay === yesterday()) next = { count: prev.count + 1, lastDay: today() };
+  else next = { count: 1, lastDay: today() };
+  try {
+    await AsyncStorage.setItem(STREAK_KEY, JSON.stringify(next));
+  } catch {
+    // Saving can fail in private windows; the session still counts on screen.
+  }
+  return next;
+}
+const streakLine = (n: number) =>
+  n <= 0 ? 'Start your streak today' : n === 1 ? '1 day in a row. Keep it going.' : `${n} days in a row. Keep it going.`;
+
 function clock(totalSeconds: number) {
   const s = Math.max(0, Math.ceil(totalSeconds));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -129,13 +195,17 @@ function clock(totalSeconds: number) {
 // ---------------------------------------------------------------------------
 // Home: pick how you want to feel.
 // ---------------------------------------------------------------------------
-function Home({ onPick }: { onPick: (e: Exercise) => void }) {
+function Home({ onPick, streak }: { onPick: (e: Exercise) => void; streak: number }) {
   return (
     <ScrollView contentContainerStyle={styles.homeScroll}>
       <View style={styles.column}>
         <Text style={styles.brand}>MAJOR LEAGUE MINDSET+</Text>
         <Text style={styles.h1}>The Breath Gym</Text>
         <Text style={styles.sub}>Train your breath. Own your state.</Text>
+        <View style={styles.streakPill}>
+          <Text style={styles.streakNum}>{streak}</Text>
+          <Text style={styles.streakText}>{streakLine(streak)}</Text>
+        </View>
 
         <Pressable
           accessibilityRole="button"
@@ -165,7 +235,7 @@ function Home({ onPick }: { onPick: (e: Exercise) => void }) {
             </Pressable>
           ))}
         </View>
-        <Text style={styles.beta}>Beta · timings are placeholders</Text>
+        <Text style={styles.beta}>Beta · timings are placeholders · streak saves on this device</Text>
       </View>
     </ScrollView>
   );
@@ -174,7 +244,17 @@ function Home({ onPick }: { onPick: (e: Exercise) => void }) {
 // ---------------------------------------------------------------------------
 // Session: the breathing circle.
 // ---------------------------------------------------------------------------
-function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void }) {
+function Session({
+  exercise,
+  onBack,
+  streak,
+  onComplete,
+}: {
+  exercise: Exercise;
+  onBack: () => void;
+  streak: number;
+  onComplete: () => void;
+}) {
   const [duration, setDuration] = useState(exercise.startSeconds ?? 60);
   const [status, setStatus] = useState<'ready' | 'running' | 'done'>('ready');
   const [elapsed, setElapsed] = useState(0);
@@ -189,8 +269,13 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
   useEffect(() => {
     if (!exercise.voice) return;
     const made: Partial<Record<VoiceClip, AudioPlayer>> = {};
-    (Object.keys(exercise.voice.clips) as VoiceClip[]).forEach((k) => {
-      made[k] = createAudioPlayer(exercise.voice!.clips[k]);
+    const sources: Record<VoiceClip, number> = {
+      ...CUES,
+      intro: exercise.voice.intro,
+      close: exercise.voice.close,
+    };
+    (Object.keys(sources) as VoiceClip[]).forEach((k) => {
+      made[k] = createAudioPlayer(sources[k]);
     });
     players.current = made;
     return () => {
@@ -202,7 +287,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
   const say = (clip: VoiceClip) => {
     const pl = players.current[clip];
     if (!pl || !hasVoice) return;
-    pl.volume = 1;
+    pl.volume = VOICE_VOLUME;
     pl.seekTo(0);
     pl.play();
   };
@@ -247,12 +332,12 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
     if (status !== 'running' || gettingReady) return;
     if (lastStep.current === stepIndex) return;
     lastStep.current = stepIndex;
-    if (step.move !== 'stay' && duration - elapsed > 2) {
-      if (!saidMid.current && elapsed >= duration / 2) {
+    if (duration - elapsed > 2) {
+      if (!saidMid.current && elapsed >= duration / 2 && step.move !== 'stay') {
         saidMid.current = true;
         say('mid');
       } else {
-        say(step.move === 'grow' ? 'in' : 'out');
+        say(step.move === 'grow' ? 'in' : step.move === 'shrink' ? 'out' : 'hold');
       }
     }
     if (step.move === 'stay') return;
@@ -273,6 +358,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
     if (status === 'done') {
       rest();
       say('close');
+      onComplete();
     }
   }, [status]);
 
@@ -382,6 +468,11 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
               <>
                 <Text style={styles.stepLabel}>Nice work</Text>
                 <Text style={styles.doneSub}>{breaths} {breaths === 1 ? 'breath' : 'breaths'}</Text>
+                {streak > 0 && (
+                  <Text style={styles.doneStreak}>
+                    {streak === 1 ? 'Day 1 of your streak' : `Congrats, ${streak} days in a row`}
+                  </Text>
+                )}
               </>
             )}
           </View>
@@ -418,7 +509,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
           onPress={status === 'running' ? stop : start}
         >
           <Text style={styles.buttonText}>
-            {status === 'running' ? 'Stop' : status === 'done' ? 'Go again' : 'Start'}
+            {status === 'running' ? 'Stop' : status === 'done' ? 'Repeat' : 'Start'}
           </Text>
         </Pressable>
 
@@ -433,7 +524,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
             <Text style={styles.voiceText}>Brandon's voice: {voiceOn ? 'On' : 'Off'}</Text>
           </Pressable>
         ) : (
-          <Text style={styles.soon}>Brandon's voice comes next for this one</Text>
+          <Text style={styles.soon}> </Text>
         )}
       </View>
     </View>
@@ -442,12 +533,23 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
 
 export default function App() {
   const [exercise, setExercise] = useState<Exercise | null>(null);
+  const [streak, setStreak] = useState(0);
+  useEffect(() => {
+    loadStreak().then((s) => setStreak(liveCount(s)));
+  }, []);
+  const onComplete = () => recordSession().then((s) => setStreak(s.count));
   return (
     <View style={styles.app}>
       {exercise ? (
-        <Session key={exercise.id} exercise={exercise} onBack={() => setExercise(null)} />
+        <Session
+          key={exercise.id}
+          exercise={exercise}
+          onBack={() => setExercise(null)}
+          streak={streak}
+          onComplete={onComplete}
+        />
       ) : (
-        <Home onPick={setExercise} />
+        <Home onPick={setExercise} streak={streak} />
       )}
       <StatusBar style="light" />
     </View>
@@ -462,6 +564,31 @@ const styles = StyleSheet.create({
   brand: { color: MUTED, fontSize: 12, fontWeight: '700', letterSpacing: 2 },
   h1: { color: TEXT, fontSize: 32, fontWeight: '800', marginTop: 8 },
   sub: { color: MUTED, fontSize: 15, marginTop: 6 },
+
+  streakPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: CARD,
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingLeft: 8,
+    paddingRight: 16,
+    marginTop: 16,
+  },
+  streakNum: {
+    color: TEXT,
+    fontSize: 15,
+    fontWeight: '800',
+    minWidth: 30,
+    textAlign: 'center',
+    backgroundColor: '#E5484D',
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    overflow: 'hidden',
+  },
+  streakText: { color: TEXT, fontSize: 14, fontWeight: '600' },
 
   quick: {
     width: '100%',
@@ -531,6 +658,8 @@ const styles = StyleSheet.create({
   stepLabel: { color: TEXT, fontSize: 20, fontWeight: '700', letterSpacing: 0.5 },
   count: { color: TEXT, fontSize: 40, fontWeight: '800', marginTop: 2 },
   doneSub: { color: TEXT, fontSize: 15, marginTop: 4, opacity: 0.9 },
+
+  doneStreak: { color: TEXT, fontSize: 13, fontWeight: '700', marginTop: 6 },
 
   pattern: { color: MUTED, fontSize: 14, marginTop: 20 },
 
