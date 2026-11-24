@@ -27,7 +27,7 @@ type Exercise = {
 // Short voice clips. They are separate so the voice stays in step with the circle
 // at any session length. leadIn = seconds of "get ready" while the opening line plays.
 type VoiceClip = 'intro' | 'in' | 'out' | 'hold' | 'mid' | 'close';
-type Voice = { leadIn: number; intro: number; close: number };
+type Voice = { leadIn: number; intro: number; close: number; introGain: number; closeGain: number };
 
 // Cues every exercise shares.
 const CUES = {
@@ -36,7 +36,9 @@ const CUES = {
   hold: require('./assets/voice/hold.mp3'),
   mid: require('./assets/voice/mid.mp3'),
 };
-const VOICE_VOLUME = 0.85; // a touch under full so the voice sits softly
+// Every clip is turned down to the level of the quiet "Breathe in" cue, so no line
+// jumps out louder than another. Gains come from measuring each recording.
+const CUE_GAIN = { in: 0.94, out: 1, hold: 0.65, mid: 0.61 };
 
 const QUICK_RESET: Exercise = {
   id: 'blb',
@@ -48,6 +50,8 @@ const QUICK_RESET: Exercise = {
     leadIn: 8.5,
     intro: require('./assets/voice/blb-intro.mp3'),
     close: require('./assets/voice/blb-close.mp3'),
+    introGain: 0.57,
+    closeGain: 0.33,
   },
   steps: [
     { label: 'Breathe in', seconds: 4, move: 'grow' },
@@ -62,6 +66,8 @@ const EXERCISES: Exercise[] = [
       leadIn: 9.5,
       intro: require('./assets/voice/focused-intro.mp3'),
       close: require('./assets/voice/focused-close.mp3'),
+      introGain: 0.51,
+      closeGain: 0.51,
     },
     name: 'Focused',
     tagline: 'Lock into the present',
@@ -80,6 +86,8 @@ const EXERCISES: Exercise[] = [
       leadIn: 7,
       intro: require('./assets/voice/calm-intro.mp3'),
       close: require('./assets/voice/calm-close.mp3'),
+      introGain: 0.52,
+      closeGain: 0.71,
     },
     name: 'Calm',
     tagline: 'Reset under pressure',
@@ -96,6 +104,8 @@ const EXERCISES: Exercise[] = [
       leadIn: 8,
       intro: require('./assets/voice/energized-intro.mp3'),
       close: require('./assets/voice/energized-close.mp3'),
+      introGain: 0.5,
+      closeGain: 0.42,
     },
     name: 'Energized',
     tagline: 'Get ready to compete',
@@ -116,6 +126,8 @@ const EXERCISES: Exercise[] = [
       leadIn: 6,
       intro: require('./assets/voice/recovered-intro.mp3'),
       close: require('./assets/voice/recovered-close.mp3'),
+      introGain: 0.44,
+      closeGain: 0.71,
     },
     name: 'Recovered',
     tagline: 'Wind down and recharge',
@@ -287,7 +299,12 @@ function Session({
   const say = (clip: VoiceClip) => {
     const pl = players.current[clip];
     if (!pl || !hasVoice) return;
-    pl.volume = VOICE_VOLUME;
+    pl.volume =
+      clip === 'intro'
+        ? exercise.voice!.introGain
+        : clip === 'close'
+          ? exercise.voice!.closeGain
+          : CUE_GAIN[clip];
     pl.seekTo(0);
     pl.play();
   };
