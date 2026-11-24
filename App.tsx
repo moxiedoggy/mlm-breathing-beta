@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle } from 'react-native-svg';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 
 // ---------------------------------------------------------------------------
 // Exercises. Everything Brandon may want to change lives in this one list:
@@ -19,7 +20,13 @@ type Exercise = {
   maxSeconds?: number; // longest session offered
   startSeconds?: number; // session length picked by default
   note?: string;
+  voice?: Voice;
 };
+
+// Short voice clips. They are separate so the voice stays in step with the circle
+// at any session length. leadIn = seconds of "get ready" while the opening line plays.
+type VoiceClip = 'intro' | 'in' | 'out' | 'mid' | 'close';
+type Voice = { leadIn: number; clips: Record<VoiceClip, number> };
 
 const QUICK_RESET: Exercise = {
   id: 'blb',
@@ -27,6 +34,16 @@ const QUICK_RESET: Exercise = {
   tagline: 'Slow · Quiet · Gentle · Through the nose',
   pattern: 'In 4 · Out 6',
   color: '#E5484D',
+  voice: {
+    leadIn: 7,
+    clips: {
+      intro: require('./assets/voice/blb-intro.mp3'),
+      in: require('./assets/voice/blb-in.mp3'),
+      out: require('./assets/voice/blb-out.mp3'),
+      mid: require('./assets/voice/blb-mid.mp3'),
+      close: require('./assets/voice/blb-close.mp3'),
+    },
+  },
   steps: [
     { label: 'Breathe in', seconds: 4, move: 'grow' },
     { label: 'Breathe out', seconds: 6, move: 'shrink' },
@@ -165,13 +182,39 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
   const lastStep = useRef(-1);
   const size = useRef(new Animated.Value(SMALL)).current;
 
+  // Voice: one small player per clip, loaded when the screen opens.
+  const [voiceOn, setVoiceOn] = useState(true);
+  const players = useRef<Partial<Record<VoiceClip, AudioPlayer>>>({});
+  const saidMid = useRef(false);
+  useEffect(() => {
+    if (!exercise.voice) return;
+    const made: Partial<Record<VoiceClip, AudioPlayer>> = {};
+    (Object.keys(exercise.voice.clips) as VoiceClip[]).forEach((k) => {
+      made[k] = createAudioPlayer(exercise.voice!.clips[k]);
+    });
+    players.current = made;
+    return () => {
+      Object.values(made).forEach((pl) => pl?.remove());
+      players.current = {};
+    };
+  }, [exercise]);
+  const hasVoice = !!exercise.voice && voiceOn;
+  const say = (clip: VoiceClip) => {
+    const pl = players.current[clip];
+    if (!pl || !hasVoice) return;
+    pl.volume = 1;
+    pl.seekTo(0);
+    pl.play();
+  };
+  const hush = () => Object.values(players.current).forEach((pl) => pl?.pause());
+
   const cycle = exercise.steps.reduce((sum, s) => sum + s.seconds, 0);
 
   // Where are we in the pattern right now?
   let stepIndex = 0;
   let stepLeft = exercise.steps[0].seconds;
   {
-    let pos = elapsed % cycle;
+    let pos = Math.max(0, elapsed) % cycle;
     for (let i = 0; i < exercise.steps.length; i++) {
       if (pos < exercise.steps[i].seconds) {
         stepIndex = i;
@@ -182,6 +225,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
     }
   }
   const step = exercise.steps[stepIndex];
+  const gettingReady = status === 'running' && elapsed < 0;
 
   // The clock runs off real time, so it stays accurate even if the browser slows timers.
   useEffect(() => {
@@ -200,9 +244,17 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
 
   // Grow or shrink the circle each time a new step begins.
   useEffect(() => {
-    if (status !== 'running') return;
+    if (status !== 'running' || gettingReady) return;
     if (lastStep.current === stepIndex) return;
     lastStep.current = stepIndex;
+    if (step.move !== 'stay' && duration - elapsed > 2) {
+      if (!saidMid.current && elapsed >= duration / 2) {
+        saidMid.current = true;
+        say('mid');
+      } else {
+        say(step.move === 'grow' ? 'in' : 'out');
+      }
+    }
     if (step.move === 'stay') return;
     Animated.timing(size, {
       toValue: step.move === 'grow' ? 1 : SMALL,
@@ -210,7 +262,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: false,
     }).start();
-  }, [status, stepIndex]);
+  }, [status, stepIndex, gettingReady]);
 
   const rest = () => {
     size.stopAnimation();
@@ -218,25 +270,46 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
   };
 
   useEffect(() => {
-    if (status === 'done') rest();
+    if (status === 'done') {
+      rest();
+      say('close');
+    }
   }, [status]);
 
   const start = () => {
-    startedAt.current = Date.now();
+    // The opening line plays first; the breathing clock starts after it.
+    const lead = hasVoice ? exercise.voice!.leadIn : 0;
+    startedAt.current = Date.now() + lead * 1000;
     lastStep.current = -1;
-    setElapsed(0);
+    saidMid.current = false;
+    if (hasVoice) {
+      // Phones only allow sound that begins with a tap, so wake every clip now.
+      (Object.keys(players.current) as VoiceClip[]).forEach((k) => {
+        const pl = players.current[k];
+        if (!pl || k === 'intro') return;
+        pl.volume = 0;
+        pl.play();
+        setTimeout(() => {
+          pl.pause();
+          pl.seekTo(0);
+        }, 80);
+      });
+      say('intro');
+    }
+    setElapsed(-lead);
     setStatus('running');
   };
 
   const stop = () => {
     setStatus('ready');
     setElapsed(0);
+    hush();
     rest();
   };
 
-  const progress = status === 'ready' ? 0 : Math.min(1, elapsed / duration);
+  const progress = status === 'ready' ? 0 : Math.max(0, Math.min(1, elapsed / duration));
   const angle = progress * 2 * Math.PI - Math.PI / 2;
-  const breaths = Math.floor(elapsed / cycle);
+  const breaths = Math.floor(Math.max(0, elapsed) / cycle);
 
   return (
     <View style={styles.session}>
@@ -255,7 +328,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
         </View>
 
         <Text style={styles.timeLabel}>{status === 'done' ? 'Session complete' : 'Time left'}</Text>
-        <Text style={styles.time}>{clock(duration - (status === 'ready' ? 0 : elapsed))}</Text>
+        <Text style={styles.time}>{clock(duration - (status === 'ready' ? 0 : Math.max(0, elapsed)))}</Text>
 
         <View style={styles.stage}>
           <Svg width={STAGE} height={STAGE} style={StyleSheet.absoluteFill}>
@@ -279,7 +352,7 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
               strokeDashoffset={RING_LEN * (1 - progress)}
               transform={`rotate(-90 ${STAGE / 2} ${STAGE / 2})`}
             />
-            {status === 'running' && (
+            {status === 'running' && !gettingReady && (
               <Circle
                 cx={STAGE / 2 + RING_R * Math.cos(angle)}
                 cy={STAGE / 2 + RING_R * Math.sin(angle)}
@@ -298,7 +371,8 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
           />
           <View style={styles.center}>
             {status === 'ready' && <Text style={styles.stepLabel}>Ready</Text>}
-            {status === 'running' && (
+            {gettingReady && <Text style={styles.stepLabel}>Get ready</Text>}
+            {status === 'running' && !gettingReady && (
               <>
                 <Text style={styles.stepLabel}>{step.label}</Text>
                 <Text style={styles.count}>{Math.ceil(stepLeft)}</Text>
@@ -348,7 +422,19 @@ function Session({ exercise, onBack }: { exercise: Exercise; onBack: () => void 
           </Text>
         </Pressable>
 
-        <Text style={styles.soon}>Brandon's voice and background sound come next</Text>
+        {exercise.voice ? (
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: voiceOn }}
+            disabled={status === 'running'}
+            style={styles.voiceToggle}
+            onPress={() => setVoiceOn((v) => !v)}
+          >
+            <Text style={styles.voiceText}>Brandon's voice: {voiceOn ? 'On' : 'Off'}</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.soon}>Brandon's voice comes next for this one</Text>
+        )}
       </View>
     </View>
   );
@@ -467,5 +553,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   buttonText: { color: TEXT, fontSize: 18, fontWeight: '800' },
+  voiceToggle: { marginTop: 14, paddingVertical: 10, paddingHorizontal: 16 },
+  voiceText: { color: MUTED, fontSize: 14, fontWeight: '600' },
   soon: { color: MUTED, fontSize: 12, marginTop: 18, opacity: 0.7 },
 });

@@ -24,6 +24,9 @@
     },
     "experiments": {
       "baseUrl": "/mlm-breathing-beta"
-    }
+    },
+    "plugins": [
+      "expo-audio"
+    ]
   }
 }
