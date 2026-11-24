@@ -26,7 +26,8 @@ type Exercise = {
 
 // Short voice clips. They are separate so the voice stays in step with the circle
 // at any session length. leadIn = seconds of "get ready" while the opening line plays.
-type VoiceClip = 'intro' | 'in' | 'out' | 'hold' | 'mid' | 'close';
+type VoiceClip = 'intro' | 'in' | 'out' | 'hold' | 'mid' | 'close' | 'announce' | 'setup' | 'tones';
+type Clip = { src: number; len: number; gain: number };
 type Voice = { leadIn: number; intro: number; close: number; introGain: number; closeGain: number };
 
 // Cues every exercise shares.
@@ -38,7 +39,43 @@ const CUES = {
 };
 // Every clip is turned down to the level of the quiet "Breathe in" cue, so no line
 // jumps out louder than another. Gains come from measuring each recording.
-const CUE_GAIN = { in: 0.94, out: 1, hold: 0.65, mid: 0.61 };
+const CUE_GAIN = { in: 0.94, out: 1, hold: 0.98, mid: 0.61 };
+
+// Spoken before each session: "You're about to start a ... session."
+const ANNOUNCE: Record<string, Record<number, Clip>> = {
+  blb: {
+    30: { src: require('./assets/voice/ann-blb-30.mp3'), len: 4.8, gain: 0.45 },
+    60: { src: require('./assets/voice/ann-blb-60.mp3'), len: 4.5, gain: 0.38 },
+    180: { src: require('./assets/voice/ann-blb-180.mp3'), len: 4.4, gain: 0.4 },
+    300: { src: require('./assets/voice/ann-blb-300.mp3'), len: 4.7, gain: 0.42 },
+  },
+  focused: {
+    30: { src: require('./assets/voice/ann-focused-30.mp3'), len: 4.8, gain: 0.49 },
+    60: { src: require('./assets/voice/ann-focused-60.mp3'), len: 4.4, gain: 0.43 },
+    180: { src: require('./assets/voice/ann-focused-180.mp3'), len: 4.6, gain: 0.51 },
+    300: { src: require('./assets/voice/ann-focused-300.mp3'), len: 4.1, gain: 0.46 },
+  },
+  calm: {
+    30: { src: require('./assets/voice/ann-calm-30.mp3'), len: 4.8, gain: 0.47 },
+    60: { src: require('./assets/voice/ann-calm-60.mp3'), len: 4.4, gain: 0.49 },
+    180: { src: require('./assets/voice/ann-calm-180.mp3'), len: 4.5, gain: 0.45 },
+    300: { src: require('./assets/voice/ann-calm-300.mp3'), len: 4.5, gain: 0.44 },
+  },
+  energized: {
+    30: { src: require('./assets/voice/ann-energized-30.mp3'), len: 5.4, gain: 0.44 },
+    60: { src: require('./assets/voice/ann-energized-60.mp3'), len: 4.9, gain: 0.43 },
+  },
+  recovered: {
+    30: { src: require('./assets/voice/ann-recovered-30.mp3'), len: 4.9, gain: 0.49 },
+    60: { src: require('./assets/voice/ann-recovered-60.mp3'), len: 4.7, gain: 0.5 },
+    180: { src: require('./assets/voice/ann-recovered-180.mp3'), len: 4.7, gain: 0.47 },
+    300: { src: require('./assets/voice/ann-recovered-300.mp3'), len: 4.8, gain: 0.48 },
+  },
+};
+// "Get yourself into a relaxed position... We will begin in three seconds."
+const SETUP: Clip = { src: require('./assets/voice/setup.mp3'), len: 6.5, gain: 0.38 };
+// Three low, soft tones, one per second.
+const TONES: Clip = { src: require('./assets/voice/tones.m4a'), len: 3, gain: 1 };
 
 const QUICK_RESET: Exercise = {
   id: 'blb',
@@ -276,39 +313,48 @@ function Session({
 
   // Voice: one small player per clip, loaded when the screen opens.
   const [voiceOn, setVoiceOn] = useState(true);
-  const players = useRef<Partial<Record<VoiceClip, AudioPlayer>>>({});
+  const players = useRef<Record<string, AudioPlayer>>({});
+  const gains = useRef<Record<string, number>>({});
   const saidMid = useRef(false);
+  // The opening sequence: announcement, get-ready line, three tones, then the intro line.
+  const schedule = useRef<{ at: number; clip: VoiceClip }[]>([]);
+  const [tonesAt, setTonesAt] = useState(0);
   useEffect(() => {
     if (!exercise.voice) return;
-    const made: Partial<Record<VoiceClip, AudioPlayer>> = {};
-    const sources: Record<VoiceClip, number> = {
-      ...CUES,
-      intro: exercise.voice.intro,
-      close: exercise.voice.close,
+    const clips: Record<string, Clip> = {
+      in: { src: CUES.in, len: 0, gain: CUE_GAIN.in },
+      out: { src: CUES.out, len: 0, gain: CUE_GAIN.out },
+      hold: { src: CUES.hold, len: 0, gain: CUE_GAIN.hold },
+      mid: { src: CUES.mid, len: 0, gain: CUE_GAIN.mid },
+      intro: { src: exercise.voice.intro, len: 0, gain: exercise.voice.introGain },
+      close: { src: exercise.voice.close, len: 0, gain: exercise.voice.closeGain },
+      setup: SETUP,
+      tones: TONES,
     };
-    (Object.keys(sources) as VoiceClip[]).forEach((k) => {
-      made[k] = createAudioPlayer(sources[k]);
+    Object.entries(ANNOUNCE[exercise.id] ?? {}).forEach(([sec, clip]) => {
+      clips[`announce${sec}`] = clip;
+    });
+    const made: Record<string, AudioPlayer> = {};
+    Object.keys(clips).forEach((k) => {
+      made[k] = createAudioPlayer(clips[k].src);
+      gains.current[k] = clips[k].gain;
     });
     players.current = made;
     return () => {
-      Object.values(made).forEach((pl) => pl?.remove());
+      Object.values(made).forEach((pl) => pl.remove());
       players.current = {};
     };
   }, [exercise]);
   const hasVoice = !!exercise.voice && voiceOn;
   const say = (clip: VoiceClip) => {
-    const pl = players.current[clip];
+    const key = clip === 'announce' ? `announce${duration}` : clip;
+    const pl = players.current[key];
     if (!pl || !hasVoice) return;
-    pl.volume =
-      clip === 'intro'
-        ? exercise.voice!.introGain
-        : clip === 'close'
-          ? exercise.voice!.closeGain
-          : CUE_GAIN[clip];
+    pl.volume = gains.current[key] ?? 1;
     pl.seekTo(0);
     pl.play();
   };
-  const hush = () => Object.values(players.current).forEach((pl) => pl?.pause());
+  const hush = () => Object.values(players.current).forEach((pl) => pl.pause());
 
   const cycle = exercise.steps.reduce((sum, s) => sum + s.seconds, 0);
 
@@ -328,6 +374,18 @@ function Session({
   }
   const step = exercise.steps[stepIndex];
   const gettingReady = status === 'running' && elapsed < 0;
+  const toneCount =
+    gettingReady && elapsed >= tonesAt && elapsed < tonesAt + TONES.len
+      ? TONES.len - Math.floor(elapsed - tonesAt)
+      : 0;
+
+  // Play each part of the opening sequence when its moment arrives.
+  useEffect(() => {
+    if (status !== 'running') return;
+    while (schedule.current.length && elapsed >= schedule.current[0].at) {
+      say(schedule.current.shift()!.clip);
+    }
+  }, [status, elapsed]);
 
   // The clock runs off real time, so it stays accurate even if the browser slows timers.
   useEffect(() => {
@@ -380,16 +438,26 @@ function Session({
   }, [status]);
 
   const start = () => {
-    // The opening line plays first; the breathing clock starts after it.
-    const lead = hasVoice ? exercise.voice!.leadIn : 0;
-    startedAt.current = Date.now() + lead * 1000;
-    lastStep.current = -1;
-    saidMid.current = false;
+    // Opening sequence (voice on): announcement, get-ready line, three tones, intro line.
+    let lead = 0;
+    schedule.current = [];
     if (hasVoice) {
+      const announce = ANNOUNCE[exercise.id]?.[duration];
+      const tSetup = (announce ? announce.len : 0) + 0.4;
+      const tTones = tSetup + SETUP.len + 0.3;
+      const tIntro = tTones + TONES.len + 0.4;
+      lead = tIntro + exercise.voice!.leadIn;
+      schedule.current = [
+        { at: tSetup - lead, clip: 'setup' },
+        { at: tTones - lead, clip: 'tones' },
+        { at: tIntro - lead, clip: 'intro' },
+      ];
+      setTonesAt(tTones - lead);
       // Phones only allow sound that begins with a tap, so wake every clip now.
-      (Object.keys(players.current) as VoiceClip[]).forEach((k) => {
+      const first = `announce${duration}`;
+      Object.keys(players.current).forEach((k) => {
         const pl = players.current[k];
-        if (!pl || k === 'intro') return;
+        if (k === first) return;
         pl.volume = 0;
         pl.play();
         setTimeout(() => {
@@ -397,8 +465,11 @@ function Session({
           pl.seekTo(0);
         }, 80);
       });
-      say('intro');
+      say('announce');
     }
+    startedAt.current = Date.now() + lead * 1000;
+    lastStep.current = -1;
+    saidMid.current = false;
     setElapsed(-lead);
     setStatus('running');
   };
@@ -474,7 +545,8 @@ function Session({
           />
           <View style={styles.center}>
             {status === 'ready' && <Text style={styles.stepLabel}>Ready</Text>}
-            {gettingReady && <Text style={styles.stepLabel}>Get ready</Text>}
+            {gettingReady && toneCount === 0 && <Text style={styles.stepLabel}>Get ready</Text>}
+            {toneCount > 0 && <Text style={styles.count}>{toneCount}</Text>}
             {status === 'running' && !gettingReady && (
               <>
                 <Text style={styles.stepLabel}>{step.label}</Text>
