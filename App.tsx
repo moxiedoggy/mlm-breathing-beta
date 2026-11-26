@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Polygon, Polyline, Rect } from 'react-native-svg';
 import { createAudioPlayer, preload, type AudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SPRITE, SPRITE_SRC } from './voiceSprite';
@@ -19,10 +19,14 @@ const MUSIC_KEY = 'breathgym.music';
 // Timings are placeholders until Brandon confirms his own patterns.
 // ---------------------------------------------------------------------------
 type Step = { label: string; seconds: number; move: 'grow' | 'shrink' | 'stay' };
+type IconName = 'target' | 'wave' | 'bolt' | 'battery' | 'refresh' | 'moon' | 'sliders';
+// Seconds for each part of one breath: in, hold, out, hold. 0 means that part is skipped.
+type Counts = { in: number; hold1: number; out: number; hold2: number };
 type Exercise = {
   id: string;
   name: string;
-  tagline: string;
+  tagline: string; // when to use it
+  icon: IconName;
   pattern: string;
   color: string;
   steps: Step[];
@@ -31,80 +35,109 @@ type Exercise = {
   note?: string;
 };
 
-const EXERCISES: Exercise[] = [
-  {
-    id: 'focused',
-    name: 'Focused',
-    tagline: 'Lock into the present',
-    pattern: 'Box breathing · 4-4-4-4',
-    color: '#4DA3FF',
-    steps: [
-      { label: 'Breathe in', seconds: 4, move: 'grow' },
-      { label: 'Hold', seconds: 4, move: 'stay' },
-      { label: 'Breathe out', seconds: 4, move: 'shrink' },
-      { label: 'Hold', seconds: 4, move: 'stay' },
-    ],
-  },
-  {
-    id: 'calm',
-    name: 'Calm',
-    tagline: 'Reset under pressure',
-    pattern: 'Long exhale · In 4 · Out 6',
-    color: '#3DD6C3',
-    steps: [
-      { label: 'Breathe in', seconds: 4, move: 'grow' },
-      { label: 'Breathe out', seconds: 6, move: 'shrink' },
-    ],
-  },
-  {
-    id: 'energized',
-    name: 'Energized',
-    tagline: 'Get ready to compete',
-    pattern: 'Quick rhythm · In 3 · Out 3',
-    color: '#FF8A3D',
-    // Kept short and gentle on purpose: no fast breathing and no holds for young athletes.
-    maxSeconds: 60,
-    startSeconds: 30,
-    note: 'Sit tall. Stop if you feel dizzy.',
-    steps: [
-      { label: 'Breathe in', seconds: 3, move: 'grow' },
-      { label: 'Breathe out', seconds: 3, move: 'shrink' },
-    ],
-  },
-  {
-    id: 'recovered',
-    name: 'Recovered',
-    tagline: 'Wind down and recharge',
-    pattern: 'Slow breath · In 5 · Out 5',
-    color: '#9B8CFF',
-    steps: [
-      { label: 'Breathe in', seconds: 5, move: 'grow' },
-      { label: 'Breathe out', seconds: 5, move: 'shrink' },
-    ],
-  },
-];
-
-// "Pick your own": the athlete sets the count for each part of the breath.
-type Counts = { in: number; hold1: number; out: number; hold2: number };
-const DEFAULT_COUNTS: Counts = { in: 4, hold1: 0, out: 6, hold2: 0 };
-const CUSTOM_COLOR = '#E5484D';
-function customExercise(c: Counts): Exercise {
+function stepsOf(c: Counts): Step[] {
   const steps: Step[] = [{ label: 'Breathe in', seconds: c.in, move: 'grow' }];
   if (c.hold1 > 0) steps.push({ label: 'Hold', seconds: c.hold1, move: 'stay' });
   steps.push({ label: 'Breathe out', seconds: c.out, move: 'shrink' });
   if (c.hold2 > 0) steps.push({ label: 'Hold', seconds: c.hold2, move: 'stay' });
+  return steps;
+}
+function patternOf(c: Counts) {
   const parts = [`In ${c.in}`];
   if (c.hold1 > 0) parts.push(`Hold ${c.hold1}`);
   parts.push(`Out ${c.out}`);
   if (c.hold2 > 0) parts.push(`Hold ${c.hold2}`);
+  return parts.join(' · ');
+}
+type Preset = Omit<Exercise, 'steps' | 'pattern'> & { counts: [number, number, number, number] };
+const make = (p: Preset): Exercise => {
+  const c: Counts = { in: p.counts[0], hold1: p.counts[1], out: p.counts[2], hold2: p.counts[3] };
+  return { ...p, steps: stepsOf(c), pattern: patternOf(c) };
+};
+
+// counts = [in, hold, out, hold] in seconds, from Brandon (2026-11-26).
+const EXERCISES: Exercise[] = [
+  make({ id: 'focused', name: 'Focused', tagline: 'Lock in before a big moment', icon: 'target', color: '#4DA3FF', counts: [4, 4, 4, 4] }),
+  make({ id: 'calm', name: 'Calm', tagline: 'Settle your nerves under pressure', icon: 'wave', color: '#3DD6C3', counts: [4, 2, 6, 0] }),
+  make({
+    id: 'energized',
+    name: 'Energized',
+    tagline: 'Wake up before you compete',
+    icon: 'bolt',
+    color: '#FF8A3D',
+    counts: [3, 1, 3, 0],
+    // Kept short on purpose: no fast breathing and no long holds for young athletes.
+    maxSeconds: 60,
+    startSeconds: 30,
+    note: 'Sit tall. Stop if you feel dizzy.',
+  }),
+  make({ id: 'recovered', name: 'Recovered', tagline: 'Wind down after a game', icon: 'battery', color: '#9B8CFF', counts: [5, 0, 5, 1] }),
+  make({ id: 'reset', name: 'Reset', tagline: 'Let go after a mistake', icon: 'refresh', color: '#F472B6', counts: [3, 2, 6, 0] }),
+  // Brandon's table has 4-7-8. The hold is shortened to 4 for young athletes; change the
+  // second number to 7 for the full version.
+  make({ id: 'rested', name: 'Rested', tagline: 'Slow down before bed', icon: 'moon', color: '#F5C451', counts: [4, 4, 8, 0] }),
+];
+
+// "Pick your own": the athlete sets the count for each part of the breath.
+const DEFAULT_COUNTS: Counts = { in: 4, hold1: 0, out: 6, hold2: 0 };
+const CUSTOM_COLOR = '#E5484D';
+function customExercise(c: Counts): Exercise {
   return {
     id: 'custom',
     name: 'Your breath',
     tagline: 'Set your own breath count',
-    pattern: parts.join(' · '),
+    icon: 'sliders',
+    pattern: patternOf(c),
     color: CUSTOM_COLOR,
-    steps,
+    steps: stepsOf(c),
   };
+}
+
+// Simple line icons, drawn in the tile's own color.
+function Icon({ name, color, size = 22 }: { name: IconName; color: string; size?: number }) {
+  const line = { stroke: color, strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      {name === 'target' && (
+        <>
+          <Circle cx={12} cy={12} r={10} {...line} />
+          <Circle cx={12} cy={12} r={6} {...line} />
+          <Circle cx={12} cy={12} r={2} {...line} />
+        </>
+      )}
+      {name === 'wave' && (
+        <>
+          <Path d="M2 9c2.5-4 5-4 7.5 0s5 4 7.5 0 3.5-3 5-2" {...line} />
+          <Path d="M2 16c2.5-4 5-4 7.5 0s5 4 7.5 0 3.5-3 5-2" {...line} />
+        </>
+      )}
+      {name === 'bolt' && <Polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" {...line} />}
+      {name === 'battery' && (
+        <>
+          <Rect x={1} y={6} width={18} height={12} rx={2} ry={2} {...line} />
+          <Line x1={23} y1={11} x2={23} y2={13} {...line} />
+          <Line x1={5} y1={10} x2={5} y2={14} {...line} />
+          <Line x1={9} y1={10} x2={9} y2={14} {...line} />
+          <Line x1={13} y1={10} x2={13} y2={14} {...line} />
+        </>
+      )}
+      {name === 'refresh' && (
+        <>
+          <Polyline points="23 4 23 10 17 10" {...line} />
+          <Path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" {...line} />
+        </>
+      )}
+      {name === 'moon' && <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" {...line} />}
+      {name === 'sliders' && (
+        <>
+          <Line x1={4} y1={7} x2={20} y2={7} {...line} />
+          <Line x1={4} y1={17} x2={20} y2={17} {...line} />
+          <Circle cx={9} cy={7} r={2.5} {...line} fill={BG} />
+          <Circle cx={15} cy={17} r={2.5} {...line} fill={BG} />
+        </>
+      )}
+    </Svg>
+  );
 }
 
 const DURATIONS = [
@@ -206,7 +239,9 @@ function Home({
               style={styles.card}
               onPress={() => onPick(e)}
             >
-              <View style={[styles.dot, { backgroundColor: e.color }]} />
+              <View style={[styles.iconChip, { backgroundColor: e.color + '26' }]}>
+                <Icon name={e.icon} color={e.color} />
+              </View>
               <Text style={styles.cardName}>{e.name}</Text>
               <Text style={styles.cardTag}>{e.tagline}</Text>
             </Pressable>
@@ -214,7 +249,9 @@ function Home({
         </View>
 
         <Pressable accessibilityRole="button" style={styles.custom} onPress={onCustom}>
-          <View style={[styles.dot, { backgroundColor: CUSTOM_COLOR, marginBottom: 0 }]} />
+          <View style={[styles.iconChip, { backgroundColor: CUSTOM_COLOR + '26', marginBottom: 0 }]}>
+            <Icon name="sliders" color={CUSTOM_COLOR} />
+          </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.cardName}>Pick your own</Text>
             <Text style={styles.cardTag}>Set your own breath count</Text>
@@ -222,7 +259,7 @@ function Home({
           <Text style={styles.customGo}>›</Text>
         </Pressable>
 
-        <Text style={styles.beta}>Beta · timings are placeholders · streak saves on this device</Text>
+        <Text style={styles.beta}>Beta · your streak saves on this device</Text>
       </View>
     </ScrollView>
   );
@@ -238,6 +275,12 @@ const COUNT_ROWS: { key: keyof Counts; label: string; min: number }[] = [
   { key: 'hold2', label: 'Hold', min: 0 },
 ];
 const MAX_COUNT = 10;
+const BAR_PARTS: { key: keyof Counts; color: string }[] = [
+  { key: 'in', color: '#4DA3FF' },
+  { key: 'hold1', color: '#D9A441' },
+  { key: 'out', color: '#3DBE9B' },
+  { key: 'hold2', color: '#8E9BB8' },
+];
 
 function CustomSetup({
   counts,
@@ -291,6 +334,26 @@ function CustomSetup({
             </View>
           );
         })}
+
+        <View style={styles.bar}>
+          {BAR_PARTS.filter((part) => counts[part.key] > 0).map((part) => (
+            <View key={part.key} style={[styles.barPart, { flex: counts[part.key], backgroundColor: part.color }]}>
+              <Text style={styles.barText}>{counts[part.key]}s</Text>
+            </View>
+          ))}
+        </View>
+        <View style={styles.summary}>
+          <View>
+            <Text style={styles.summaryLabel}>Your pattern</Text>
+            <Text style={styles.summaryValue}>
+              {counts.in}-{counts.hold1}-{counts.out}-{counts.hold2}
+            </Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.summaryLabel}>One breath</Text>
+            <Text style={styles.summaryValue}>{counts.in + counts.hold1 + counts.out + counts.hold2}s</Text>
+          </View>
+        </View>
 
         <Text style={styles.note}>Keep it comfortable. Stop if you feel dizzy.</Text>
 
@@ -790,9 +853,16 @@ const styles = StyleSheet.create({
     backgroundColor: CARD,
     borderRadius: 18,
     padding: 16,
-    minHeight: 116,
+    minHeight: 132,
   },
-  dot: { width: 14, height: 14, borderRadius: 7, marginBottom: 14 },
+  iconChip: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
   cardName: { color: TEXT, fontSize: 18, fontWeight: '800' },
   cardTag: { color: MUTED, fontSize: 13, marginTop: 4 },
   custom: {
@@ -837,6 +907,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepBtnOff: { opacity: 0.35 },
+  bar: { width: '100%', flexDirection: 'row', gap: 4, marginTop: 18, height: 40 },
+  barPart: { borderRadius: 8, alignItems: 'center', justifyContent: 'center', minWidth: 30 },
+  barText: { color: '#06122B', fontSize: 14, fontWeight: '800' },
+  summary: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+  summaryLabel: { color: MUTED, fontSize: 12 },
+  summaryValue: { color: TEXT, fontSize: 17, fontWeight: '800', marginTop: 2, fontVariant: ['tabular-nums'] },
   stepBtnText: { color: TEXT, fontSize: 24, fontWeight: '600', lineHeight: 28 },
 
   session: { flex: 1, padding: 20, paddingTop: 24 },
