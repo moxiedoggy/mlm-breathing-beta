@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle } from 'react-native-svg';
 import { createAudioPlayer, preload, type AudioPlayer } from 'expo-audio';
@@ -119,6 +119,8 @@ const CARD = '#101B3A';
 const TEXT = '#FFFFFF';
 const MUTED = '#8E9BB8';
 const SMALL = 0.6;
+const ON = '#34C759'; // switch on: green
+const OFF = '#E5484D'; // switch off: red
 
 const STAGE = 300;
 const RING_R = 138;
@@ -653,23 +655,35 @@ function Session({
           </Text>
         </Pressable>
 
-        <Pressable
-          accessibilityRole="switch"
-          accessibilityState={{ checked: voiceOn }}
-          disabled={status === 'running'}
-          style={styles.voiceToggle}
-          onPress={() => setVoiceOn((v) => !v)}
-        >
-          <Text style={styles.voiceText}>Brandon's voice: {voiceOn ? 'On' : 'Off'}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="switch"
-          accessibilityState={{ checked: musicOn }}
-          style={styles.musicToggle}
-          onPress={toggleMusic}
-        >
-          <Text style={styles.voiceText}>Background music: {musicOn ? 'On' : 'Off'}</Text>
-        </Pressable>
+        <View style={styles.toggles}>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Brandon's voice</Text>
+            <Text style={[styles.toggleState, { color: voiceOn ? ON : OFF }]}>{voiceOn ? 'On' : 'Off'}</Text>
+            <Switch
+              accessibilityLabel="Brandon's voice"
+              value={voiceOn}
+              disabled={status === 'running'}
+              onValueChange={setVoiceOn}
+              trackColor={{ false: OFF, true: ON }}
+              ios_backgroundColor={OFF}
+              thumbColor={TEXT}
+              {...({ activeThumbColor: TEXT } as object)}
+            />
+          </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Background music</Text>
+            <Text style={[styles.toggleState, { color: musicOn ? ON : OFF }]}>{musicOn ? 'On' : 'Off'}</Text>
+            <Switch
+              accessibilityLabel="Background music"
+              value={musicOn}
+              onValueChange={toggleMusic}
+              trackColor={{ false: OFF, true: ON }}
+              ios_backgroundColor={OFF}
+              thumbColor={TEXT}
+              {...({ activeThumbColor: TEXT } as object)}
+            />
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -880,7 +894,15 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   buttonText: { color: TEXT, fontSize: 18, fontWeight: '800' },
-  voiceToggle: { marginTop: 14, paddingVertical: 10, paddingHorizontal: 16 },
-  musicToggle: { paddingVertical: 10, paddingHorizontal: 16 },
-  voiceText: { color: MUTED, fontSize: 14, fontWeight: '600' },
+  toggles: { width: '100%', maxWidth: 320, marginTop: 18, gap: 10 },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: CARD,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  toggleLabel: { flex: 1, color: TEXT, fontSize: 15, fontWeight: '600' },
+  toggleState: { fontSize: 13, fontWeight: '700', marginRight: 10 },
 });
