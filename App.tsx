@@ -2,8 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle } from 'react-native-svg';
-import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
+import { createAudioPlayer, preload, type AudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SPRITE, SPRITE_SRC } from './voiceSprite';
+
+// Fetch the voice file as soon as the app opens so it is ready by the first tap.
+Promise.resolve(preload(SPRITE_SRC)).catch(() => {});
 
 // ---------------------------------------------------------------------------
 // Exercises. Everything Brandon may want to change lives in this one list:
@@ -21,91 +25,11 @@ type Exercise = {
   maxSeconds?: number; // longest session offered
   startSeconds?: number; // session length picked by default
   note?: string;
-  voice?: Voice;
-};
-
-// Short voice clips. They are separate so the voice stays in step with the circle
-// at any session length. leadIn = seconds of "get ready" while the opening line plays.
-type VoiceClip = 'intro' | 'in' | 'out' | 'hold' | 'mid' | 'close' | 'announce' | 'setup' | 'tones';
-type Clip = { src: number; len: number; gain: number };
-type Voice = { leadIn: number; intro: number; close: number; introGain: number; closeGain: number };
-
-// Cues every exercise shares.
-const CUES = {
-  in: require('./assets/voice/in.mp3'),
-  out: require('./assets/voice/out.mp3'),
-  hold: require('./assets/voice/hold.mp3'),
-  mid: require('./assets/voice/mid.mp3'),
-};
-// Every clip is turned down to the level of the quiet "Breathe in" cue, so no line
-// jumps out louder than another. Gains come from measuring each recording.
-const CUE_GAIN = { in: 0.94, out: 1, hold: 0.98, mid: 0.61 };
-
-// Spoken before each session: "You're about to start a ... session."
-const ANNOUNCE: Record<string, Record<number, Clip>> = {
-  blb: {
-    30: { src: require('./assets/voice/ann-blb-30.mp3'), len: 4.8, gain: 0.45 },
-    60: { src: require('./assets/voice/ann-blb-60.mp3'), len: 4.5, gain: 0.38 },
-    180: { src: require('./assets/voice/ann-blb-180.mp3'), len: 4.4, gain: 0.4 },
-    300: { src: require('./assets/voice/ann-blb-300.mp3'), len: 4.7, gain: 0.42 },
-  },
-  focused: {
-    30: { src: require('./assets/voice/ann-focused-30.mp3'), len: 4.8, gain: 0.49 },
-    60: { src: require('./assets/voice/ann-focused-60.mp3'), len: 4.4, gain: 0.43 },
-    180: { src: require('./assets/voice/ann-focused-180.mp3'), len: 4.6, gain: 0.51 },
-    300: { src: require('./assets/voice/ann-focused-300.mp3'), len: 4.1, gain: 0.46 },
-  },
-  calm: {
-    30: { src: require('./assets/voice/ann-calm-30.mp3'), len: 4.8, gain: 0.47 },
-    60: { src: require('./assets/voice/ann-calm-60.mp3'), len: 4.4, gain: 0.49 },
-    180: { src: require('./assets/voice/ann-calm-180.mp3'), len: 4.5, gain: 0.45 },
-    300: { src: require('./assets/voice/ann-calm-300.mp3'), len: 4.5, gain: 0.44 },
-  },
-  energized: {
-    30: { src: require('./assets/voice/ann-energized-30.mp3'), len: 5.4, gain: 0.44 },
-    60: { src: require('./assets/voice/ann-energized-60.mp3'), len: 4.9, gain: 0.43 },
-  },
-  recovered: {
-    30: { src: require('./assets/voice/ann-recovered-30.mp3'), len: 4.9, gain: 0.49 },
-    60: { src: require('./assets/voice/ann-recovered-60.mp3'), len: 4.7, gain: 0.5 },
-    180: { src: require('./assets/voice/ann-recovered-180.mp3'), len: 4.7, gain: 0.47 },
-    300: { src: require('./assets/voice/ann-recovered-300.mp3'), len: 4.8, gain: 0.48 },
-  },
-};
-// "Get yourself into a relaxed position... We will begin in three seconds."
-const SETUP: Clip = { src: require('./assets/voice/setup.mp3'), len: 6.5, gain: 0.38 };
-// Three low, soft tones, one per second.
-const TONES: Clip = { src: require('./assets/voice/tones.m4a'), len: 3, gain: 1 };
-
-const QUICK_RESET: Exercise = {
-  id: 'blb',
-  name: 'Big League Breath',
-  tagline: 'Slow · Quiet · Gentle · Through the nose',
-  pattern: 'In 4 · Out 6',
-  color: '#E5484D',
-  voice: {
-    leadIn: 8.5,
-    intro: require('./assets/voice/blb-intro.mp3'),
-    close: require('./assets/voice/blb-close.mp3'),
-    introGain: 0.57,
-    closeGain: 0.33,
-  },
-  steps: [
-    { label: 'Breathe in', seconds: 4, move: 'grow' },
-    { label: 'Breathe out', seconds: 6, move: 'shrink' },
-  ],
 };
 
 const EXERCISES: Exercise[] = [
   {
     id: 'focused',
-    voice: {
-      leadIn: 9.5,
-      intro: require('./assets/voice/focused-intro.mp3'),
-      close: require('./assets/voice/focused-close.mp3'),
-      introGain: 0.51,
-      closeGain: 0.51,
-    },
     name: 'Focused',
     tagline: 'Lock into the present',
     pattern: 'Box breathing · 4-4-4-4',
@@ -119,13 +43,6 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'calm',
-    voice: {
-      leadIn: 7,
-      intro: require('./assets/voice/calm-intro.mp3'),
-      close: require('./assets/voice/calm-close.mp3'),
-      introGain: 0.52,
-      closeGain: 0.71,
-    },
     name: 'Calm',
     tagline: 'Reset under pressure',
     pattern: 'Long exhale · In 4 · Out 6',
@@ -137,13 +54,6 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'energized',
-    voice: {
-      leadIn: 8,
-      intro: require('./assets/voice/energized-intro.mp3'),
-      close: require('./assets/voice/energized-close.mp3'),
-      introGain: 0.5,
-      closeGain: 0.42,
-    },
     name: 'Energized',
     tagline: 'Get ready to compete',
     pattern: 'Quick rhythm · In 3 · Out 3',
@@ -159,13 +69,6 @@ const EXERCISES: Exercise[] = [
   },
   {
     id: 'recovered',
-    voice: {
-      leadIn: 6,
-      intro: require('./assets/voice/recovered-intro.mp3'),
-      close: require('./assets/voice/recovered-close.mp3'),
-      introGain: 0.44,
-      closeGain: 0.71,
-    },
     name: 'Recovered',
     tagline: 'Wind down and recharge',
     pattern: 'Slow breath · In 5 · Out 5',
@@ -176,6 +79,29 @@ const EXERCISES: Exercise[] = [
     ],
   },
 ];
+
+// "Pick your own": the athlete sets the count for each part of the breath.
+type Counts = { in: number; hold1: number; out: number; hold2: number };
+const DEFAULT_COUNTS: Counts = { in: 4, hold1: 0, out: 6, hold2: 0 };
+const CUSTOM_COLOR = '#E5484D';
+function customExercise(c: Counts): Exercise {
+  const steps: Step[] = [{ label: 'Breathe in', seconds: c.in, move: 'grow' }];
+  if (c.hold1 > 0) steps.push({ label: 'Hold', seconds: c.hold1, move: 'stay' });
+  steps.push({ label: 'Breathe out', seconds: c.out, move: 'shrink' });
+  if (c.hold2 > 0) steps.push({ label: 'Hold', seconds: c.hold2, move: 'stay' });
+  const parts = [`In ${c.in}`];
+  if (c.hold1 > 0) parts.push(`Hold ${c.hold1}`);
+  parts.push(`Out ${c.out}`);
+  if (c.hold2 > 0) parts.push(`Hold ${c.hold2}`);
+  return {
+    id: 'custom',
+    name: 'Your breath',
+    tagline: 'Set your own breath count',
+    pattern: parts.join(' · '),
+    color: CUSTOM_COLOR,
+    steps,
+  };
+}
 
 const DURATIONS = [
   { label: '30 sec', seconds: 30 },
@@ -201,6 +127,7 @@ const RING_LEN = 2 * Math.PI * RING_R;
 // ---------------------------------------------------------------------------
 type Streak = { count: number; lastDay: string };
 const STREAK_KEY = 'breathgym.streak';
+const COUNTS_KEY = 'breathgym.custom';
 const dayKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const today = () => dayKey(new Date());
@@ -242,32 +169,27 @@ function clock(totalSeconds: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Home: pick how you want to feel.
+// Home: pick how you want to feel, or set your own breath.
 // ---------------------------------------------------------------------------
-function Home({ onPick, streak }: { onPick: (e: Exercise) => void; streak: number }) {
+function Home({
+  onPick,
+  onCustom,
+  streak,
+}: {
+  onPick: (e: Exercise) => void;
+  onCustom: () => void;
+  streak: number;
+}) {
   return (
     <ScrollView contentContainerStyle={styles.homeScroll}>
       <View style={styles.column}>
         <Text style={styles.brand}>MAJOR LEAGUE MINDSET+</Text>
-        <Text style={styles.h1}>The Breath Gym</Text>
+        <Text style={styles.h1}>Breathwork</Text>
         <Text style={styles.sub}>Train your breath. Own your state.</Text>
         <View style={styles.streakPill}>
           <Text style={styles.streakNum}>{streak}</Text>
           <Text style={styles.streakText}>{streakLine(streak)}</Text>
         </View>
-
-        <Pressable
-          accessibilityRole="button"
-          style={[styles.quick, { backgroundColor: QUICK_RESET.color }]}
-          onPress={() => onPick(QUICK_RESET)}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={styles.quickKicker}>QUICK RESET · 60 SEC</Text>
-            <Text style={styles.quickName}>{QUICK_RESET.name}</Text>
-            <Text style={styles.quickTag}>{QUICK_RESET.tagline}</Text>
-          </View>
-          <Text style={styles.quickGo}>›</Text>
-        </Pressable>
 
         <Text style={styles.question}>How do you want to feel?</Text>
         <View style={styles.grid}>
@@ -284,9 +206,97 @@ function Home({ onPick, streak }: { onPick: (e: Exercise) => void; streak: numbe
             </Pressable>
           ))}
         </View>
+
+        <Pressable accessibilityRole="button" style={styles.custom} onPress={onCustom}>
+          <View style={[styles.dot, { backgroundColor: CUSTOM_COLOR, marginBottom: 0 }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardName}>Pick your own</Text>
+            <Text style={styles.cardTag}>Set your own breath count</Text>
+          </View>
+          <Text style={styles.customGo}>›</Text>
+        </Pressable>
+
         <Text style={styles.beta}>Beta · timings are placeholders · streak saves on this device</Text>
       </View>
     </ScrollView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pick your own: set the seconds for each part of the breath.
+// ---------------------------------------------------------------------------
+const COUNT_ROWS: { key: keyof Counts; label: string; min: number }[] = [
+  { key: 'in', label: 'Breathe in', min: 2 },
+  { key: 'hold1', label: 'Hold', min: 0 },
+  { key: 'out', label: 'Breathe out', min: 2 },
+  { key: 'hold2', label: 'Hold', min: 0 },
+];
+const MAX_COUNT = 10;
+
+function CustomSetup({
+  counts,
+  onChange,
+  onBack,
+  onStart,
+}: {
+  counts: Counts;
+  onChange: (c: Counts) => void;
+  onBack: () => void;
+  onStart: () => void;
+}) {
+  return (
+    <View style={styles.session}>
+      <View style={styles.column}>
+        <View style={styles.topBar}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" style={styles.back} onPress={onBack}>
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
+          <Text style={styles.topTitle}>Pick your own</Text>
+          <View style={{ width: 44 }} />
+        </View>
+
+        <Text style={styles.setupHelp}>Set the seconds for each part of your breath.</Text>
+
+        {COUNT_ROWS.map((row) => {
+          const value = counts[row.key];
+          const set = (v: number) => onChange({ ...counts, [row.key]: v });
+          return (
+            <View key={row.key} style={styles.countRow}>
+              <Text style={styles.countLabel}>{row.label}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Less ${row.label}`}
+                disabled={value <= row.min}
+                style={[styles.stepBtn, value <= row.min && styles.stepBtnOff]}
+                onPress={() => set(value - 1)}
+              >
+                <Text style={styles.stepBtnText}>−</Text>
+              </Pressable>
+              <Text style={styles.countValue}>{value === 0 ? 'Off' : value}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`More ${row.label}`}
+                disabled={value >= MAX_COUNT}
+                style={[styles.stepBtn, value >= MAX_COUNT && styles.stepBtnOff]}
+                onPress={() => set(value + 1)}
+              >
+                <Text style={styles.stepBtnText}>+</Text>
+              </Pressable>
+            </View>
+          );
+        })}
+
+        <Text style={styles.note}>Keep it comfortable. Stop if you feel dizzy.</Text>
+
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.button, { backgroundColor: CUSTOM_COLOR }]}
+          onPress={onStart}
+        >
+          <Text style={styles.buttonText}>Continue</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -311,50 +321,50 @@ function Session({
   const lastStep = useRef(-1);
   const size = useRef(new Animated.Value(SMALL)).current;
 
-  // Voice: one small player per clip, loaded when the screen opens.
+  // Voice. Every line lives in one audio file and one player plays one line at a time,
+  // so two voices can never overlap. The Start tap is what lets a phone play it.
   const [voiceOn, setVoiceOn] = useState(true);
-  const players = useRef<Record<string, AudioPlayer>>({});
-  const gains = useRef<Record<string, number>>({});
+  const player = useRef<AudioPlayer | null>(null);
+  const stopTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const saidMid = useRef(false);
   // The opening sequence: announcement, get-ready line, three tones, then the intro line.
-  const schedule = useRef<{ at: number; clip: VoiceClip }[]>([]);
+  const schedule = useRef<{ at: number; clip: string }[]>([]);
   const [tonesAt, setTonesAt] = useState(0);
   useEffect(() => {
-    if (!exercise.voice) return;
-    const clips: Record<string, Clip> = {
-      in: { src: CUES.in, len: 0, gain: CUE_GAIN.in },
-      out: { src: CUES.out, len: 0, gain: CUE_GAIN.out },
-      hold: { src: CUES.hold, len: 0, gain: CUE_GAIN.hold },
-      mid: { src: CUES.mid, len: 0, gain: CUE_GAIN.mid },
-      intro: { src: exercise.voice.intro, len: 0, gain: exercise.voice.introGain },
-      close: { src: exercise.voice.close, len: 0, gain: exercise.voice.closeGain },
-      setup: SETUP,
-      tones: TONES,
-    };
-    Object.entries(ANNOUNCE[exercise.id] ?? {}).forEach(([sec, clip]) => {
-      clips[`announce${sec}`] = clip;
-    });
-    const made: Record<string, AudioPlayer> = {};
-    Object.keys(clips).forEach((k) => {
-      made[k] = createAudioPlayer(clips[k].src);
-      gains.current[k] = clips[k].gain;
-    });
-    players.current = made;
+    const p = createAudioPlayer(SPRITE_SRC);
+    player.current = p;
     return () => {
-      Object.values(made).forEach((pl) => pl.remove());
-      players.current = {};
+      clearTimeout(stopTimer.current);
+      clearTimeout(checkTimer.current);
+      p.remove();
+      player.current = null;
     };
-  }, [exercise]);
-  const hasVoice = !!exercise.voice && voiceOn;
-  const say = (clip: VoiceClip) => {
-    const key = clip === 'announce' ? `announce${duration}` : clip;
-    const pl = players.current[key];
-    if (!pl || !hasVoice) return;
-    pl.volume = gains.current[key] ?? 1;
-    pl.seekTo(0);
-    pl.play();
+  }, []);
+  const say = (key: string) => {
+    const p = player.current;
+    const clip = SPRITE[key];
+    if (!p || !clip || !voiceOn) return;
+    const [start, len] = clip;
+    clearTimeout(stopTimer.current);
+    clearTimeout(checkTimer.current);
+    p.seekTo(start);
+    p.play();
+    // If the jump did not land (the file was still loading), jump again.
+    checkTimer.current = setTimeout(() => {
+      const at = p.currentTime - start;
+      if (at < -0.5 || at > len) p.seekTo(start);
+    }, 250);
+    stopTimer.current = setTimeout(() => p.pause(), len * 1000 + 250);
   };
-  const hush = () => Object.values(players.current).forEach((pl) => pl.pause());
+  const hush = () => {
+    clearTimeout(stopTimer.current);
+    clearTimeout(checkTimer.current);
+    player.current?.pause();
+  };
+  const announceKey = exercise.id === 'custom' ? 'ann-custom' : `ann-${exercise.id}-${duration}`;
+  const introKey = `${exercise.id}-intro`;
+  const closeKey = `${exercise.id}-close`;
 
   const cycle = exercise.steps.reduce((sum, s) => sum + s.seconds, 0);
 
@@ -374,9 +384,10 @@ function Session({
   }
   const step = exercise.steps[stepIndex];
   const gettingReady = status === 'running' && elapsed < 0;
+  const tonesLen = SPRITE.tones[1];
   const toneCount =
-    gettingReady && elapsed >= tonesAt && elapsed < tonesAt + TONES.len
-      ? TONES.len - Math.floor(elapsed - tonesAt)
+    gettingReady && elapsed >= tonesAt && elapsed < tonesAt + tonesLen
+      ? Math.ceil(tonesLen - (elapsed - tonesAt))
       : 0;
 
   // Play each part of the opening sequence when its moment arrives.
@@ -402,13 +413,14 @@ function Session({
     return () => clearInterval(timer);
   }, [status, duration]);
 
-  // Grow or shrink the circle each time a new step begins.
+  // Grow or shrink the circle, and speak the cue, each time a new step begins.
   useEffect(() => {
     if (status !== 'running' || gettingReady) return;
     if (lastStep.current === stepIndex) return;
     lastStep.current = stepIndex;
-    if (duration - elapsed > 2) {
-      if (!saidMid.current && elapsed >= duration / 2 && step.move !== 'stay') {
+    // Skip the cue when it would not finish before the step or the session ends.
+    if (duration - elapsed > 2 && step.seconds >= 2) {
+      if (!saidMid.current && elapsed >= duration / 2 && step.move !== 'stay' && step.seconds >= 3) {
         saidMid.current = true;
         say('mid');
       } else {
@@ -432,7 +444,7 @@ function Session({
   useEffect(() => {
     if (status === 'done') {
       rest(1); // full-size circle so the finish text fits inside it
-      say('close');
+      say(closeKey);
       onComplete();
     }
   }, [status]);
@@ -442,31 +454,19 @@ function Session({
     let lead = 0;
     schedule.current = [];
     rest(); // back to the small circle before the first breath in
-    if (hasVoice) {
-      const announce = ANNOUNCE[exercise.id]?.[duration];
-      const tSetup = (announce ? announce.len : 0) + 0.4;
-      const tTones = tSetup + SETUP.len + 0.3;
-      const tIntro = tTones + TONES.len + 0.4;
-      lead = tIntro + exercise.voice!.leadIn;
+    if (voiceOn) {
+      const tSetup = (SPRITE[announceKey]?.[1] ?? 0) + 0.4;
+      const tTones = tSetup + SPRITE.setup[1] + 0.3;
+      const tIntro = tTones + tonesLen + 0.4;
+      const intro = SPRITE[introKey];
+      lead = tIntro + (intro ? intro[1] + 0.6 : 0);
       schedule.current = [
         { at: tSetup - lead, clip: 'setup' },
         { at: tTones - lead, clip: 'tones' },
-        { at: tIntro - lead, clip: 'intro' },
       ];
+      if (intro) schedule.current.push({ at: tIntro - lead, clip: introKey });
       setTonesAt(tTones - lead);
-      // Phones only allow sound that begins with a tap, so wake every clip now.
-      const first = `announce${duration}`;
-      Object.keys(players.current).forEach((k) => {
-        const pl = players.current[k];
-        if (k === first) return;
-        pl.volume = 0;
-        pl.play();
-        setTimeout(() => {
-          pl.pause();
-          pl.seekTo(0);
-        }, 80);
-      });
-      say('announce');
+      say(announceKey); // played inside the tap, which is what unlocks sound on phones
     }
     startedAt.current = Date.now() + lead * 1000;
     lastStep.current = -1;
@@ -494,7 +494,10 @@ function Session({
             accessibilityRole="button"
             accessibilityLabel="Back"
             style={styles.back}
-            onPress={onBack}
+            onPress={() => {
+              hush();
+              onBack();
+            }}
           >
             <Text style={styles.backText}>‹</Text>
           </Pressable>
@@ -603,43 +606,66 @@ function Session({
           </Text>
         </Pressable>
 
-        {exercise.voice ? (
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: voiceOn }}
-            disabled={status === 'running'}
-            style={styles.voiceToggle}
-            onPress={() => setVoiceOn((v) => !v)}
-          >
-            <Text style={styles.voiceText}>Brandon's voice: {voiceOn ? 'On' : 'Off'}</Text>
-          </Pressable>
-        ) : (
-          <Text style={styles.soon}> </Text>
-        )}
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: voiceOn }}
+          disabled={status === 'running'}
+          style={styles.voiceToggle}
+          onPress={() => setVoiceOn((v) => !v)}
+        >
+          <Text style={styles.voiceText}>Brandon's voice: {voiceOn ? 'On' : 'Off'}</Text>
+        </Pressable>
       </View>
     </View>
   );
 }
 
 export default function App() {
+  const [screen, setScreen] = useState<'home' | 'custom' | 'session'>('home');
   const [exercise, setExercise] = useState<Exercise | null>(null);
+  const [counts, setCounts] = useState<Counts>(DEFAULT_COUNTS);
   const [streak, setStreak] = useState(0);
   useEffect(() => {
     loadStreak().then((s) => setStreak(liveCount(s)));
+    AsyncStorage.getItem(COUNTS_KEY)
+      .then((raw) => raw && setCounts({ ...DEFAULT_COUNTS, ...JSON.parse(raw) }))
+      .catch(() => {});
   }, []);
   const onComplete = () => recordSession().then((s) => setStreak(s.count));
+  const fromCustom = exercise?.id === 'custom';
+
   return (
     <View style={styles.app}>
-      {exercise ? (
+      {screen === 'home' && (
+        <Home
+          streak={streak}
+          onPick={(e) => {
+            setExercise(e);
+            setScreen('session');
+          }}
+          onCustom={() => setScreen('custom')}
+        />
+      )}
+      {screen === 'custom' && (
+        <CustomSetup
+          counts={counts}
+          onChange={setCounts}
+          onBack={() => setScreen('home')}
+          onStart={() => {
+            AsyncStorage.setItem(COUNTS_KEY, JSON.stringify(counts)).catch(() => {});
+            setExercise(customExercise(counts));
+            setScreen('session');
+          }}
+        />
+      )}
+      {screen === 'session' && exercise && (
         <Session
-          key={exercise.id}
+          key={exercise.id + exercise.pattern}
           exercise={exercise}
-          onBack={() => setExercise(null)}
+          onBack={() => setScreen(fromCustom ? 'custom' : 'home')}
           streak={streak}
           onComplete={onComplete}
         />
-      ) : (
-        <Home onPick={setExercise} streak={streak} />
       )}
       <StatusBar style="light" />
     </View>
@@ -680,19 +706,6 @@ const styles = StyleSheet.create({
   },
   streakText: { color: TEXT, fontSize: 14, fontWeight: '600' },
 
-  quick: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 20,
-    padding: 20,
-    marginTop: 24,
-  },
-  quickKicker: { color: TEXT, opacity: 0.85, fontSize: 11, fontWeight: '700', letterSpacing: 1.5 },
-  quickName: { color: TEXT, fontSize: 22, fontWeight: '800', marginTop: 4 },
-  quickTag: { color: TEXT, opacity: 0.9, fontSize: 13, marginTop: 4 },
-  quickGo: { color: TEXT, fontSize: 36, fontWeight: '300', marginLeft: 12 },
-
   question: {
     color: TEXT,
     fontSize: 18,
@@ -713,7 +726,49 @@ const styles = StyleSheet.create({
   dot: { width: 14, height: 14, borderRadius: 7, marginBottom: 14 },
   cardName: { color: TEXT, fontSize: 18, fontWeight: '800' },
   cardTag: { color: MUTED, fontSize: 13, marginTop: 4 },
-  beta: { color: MUTED, fontSize: 12, marginTop: 24, opacity: 0.7 },
+  custom: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: CARD,
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 12,
+  },
+  customGo: { color: MUTED, fontSize: 30, fontWeight: '300' },
+  beta: { color: MUTED, fontSize: 12, marginTop: 24, opacity: 0.7, textAlign: 'center' },
+
+  setupHelp: { color: MUTED, fontSize: 15, marginTop: 28, marginBottom: 12, textAlign: 'center' },
+  countRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: CARD,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginTop: 10,
+  },
+  countLabel: { flex: 1, color: TEXT, fontSize: 17, fontWeight: '700' },
+  countValue: {
+    color: TEXT,
+    fontSize: 20,
+    fontWeight: '800',
+    width: 56,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
+  stepBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#24325C',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBtnOff: { opacity: 0.35 },
+  stepBtnText: { color: TEXT, fontSize: 24, fontWeight: '600', lineHeight: 28 },
 
   session: { flex: 1, padding: 20, paddingTop: 24 },
   topBar: {
@@ -748,12 +803,10 @@ const styles = StyleSheet.create({
   stepLabel: { color: TEXT, fontSize: 20, fontWeight: '700', letterSpacing: 0.5 },
   count: { color: TEXT, fontSize: 40, fontWeight: '800', marginTop: 2 },
   doneSub: { color: TEXT, fontSize: 15, marginTop: 4, opacity: 0.9 },
-
   doneStreak: { color: TEXT, fontSize: 13, fontWeight: '700', marginTop: 6, textAlign: 'center' },
 
   pattern: { color: MUTED, fontSize: 14, marginTop: 20 },
-
-  note: { color: MUTED, fontSize: 13, marginTop: 6 },
+  note: { color: MUTED, fontSize: 13, marginTop: 14, textAlign: 'center' },
 
   chips: { flexDirection: 'row', gap: 8, marginTop: 18 },
   chip: {
@@ -774,5 +827,4 @@ const styles = StyleSheet.create({
   buttonText: { color: TEXT, fontSize: 18, fontWeight: '800' },
   voiceToggle: { marginTop: 14, paddingVertical: 10, paddingHorizontal: 16 },
   voiceText: { color: MUTED, fontSize: 14, fontWeight: '600' },
-  soon: { color: MUTED, fontSize: 12, marginTop: 18, opacity: 0.7 },
 });
