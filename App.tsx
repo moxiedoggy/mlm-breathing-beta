@@ -9,6 +9,10 @@ import { SPRITE, SPRITE_SRC } from './voiceSprite';
 // Fetch the voice file as soon as the app opens so it is ready by the first tap.
 Promise.resolve(preload(SPRITE_SRC)).catch(() => {});
 
+// Soft background music. Its low level is set in the file itself (scripts/build_music.py).
+const MUSIC_SRC = require('./assets/voice/music.m4a');
+const MUSIC_KEY = 'breathgym.music';
+
 // ---------------------------------------------------------------------------
 // Exercises. Everything Brandon may want to change lives in this one list:
 // names, taglines, colors, and the breathing pattern (seconds per step).
@@ -341,6 +345,45 @@ function Session({
       player.current = null;
     };
   }, []);
+  // Background music: off unless the athlete turns it on. It has its own player so it
+  // can run under the voice, and it starts from a tap like the voice does.
+  const [musicOn, setMusicOn] = useState(false);
+  const music = useRef<AudioPlayer | null>(null);
+  const musicStop = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    AsyncStorage.getItem(MUSIC_KEY)
+      .then((v) => v === 'on' && setMusicOn(true))
+      .catch(() => {});
+    return () => {
+      clearTimeout(musicStop.current);
+      music.current?.remove();
+      music.current = null;
+    };
+  }, []);
+  const playMusic = () => {
+    clearTimeout(musicStop.current);
+    if (!music.current) {
+      music.current = createAudioPlayer(MUSIC_SRC);
+      music.current.loop = true;
+    }
+    music.current.seekTo(0);
+    music.current.play();
+  };
+  const stopMusic = (afterMs = 0) => {
+    clearTimeout(musicStop.current);
+    if (afterMs > 0) musicStop.current = setTimeout(() => music.current?.pause(), afterMs);
+    else music.current?.pause();
+  };
+  const toggleMusic = () => {
+    const next = !musicOn;
+    setMusicOn(next);
+    AsyncStorage.setItem(MUSIC_KEY, next ? 'on' : 'off').catch(() => {});
+    if (status === 'running') {
+      if (next) playMusic();
+      else stopMusic();
+    }
+  };
+
   const say = (key: string) => {
     const p = player.current;
     const clip = SPRITE[key];
@@ -445,6 +488,7 @@ function Session({
     if (status === 'done') {
       rest(1); // full-size circle so the finish text fits inside it
       say(closeKey);
+      stopMusic(6000); // let the music carry through the closing line
       onComplete();
     }
   }, [status]);
@@ -468,6 +512,7 @@ function Session({
       setTonesAt(tTones - lead);
       say(announceKey); // played inside the tap, which is what unlocks sound on phones
     }
+    if (musicOn) playMusic();
     startedAt.current = Date.now() + lead * 1000;
     lastStep.current = -1;
     saidMid.current = false;
@@ -479,6 +524,7 @@ function Session({
     setStatus('ready');
     setElapsed(0);
     hush();
+    stopMusic();
     rest();
   };
 
@@ -496,6 +542,7 @@ function Session({
             style={styles.back}
             onPress={() => {
               hush();
+              stopMusic();
               onBack();
             }}
           >
@@ -614,6 +661,14 @@ function Session({
           onPress={() => setVoiceOn((v) => !v)}
         >
           <Text style={styles.voiceText}>Brandon's voice: {voiceOn ? 'On' : 'Off'}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: musicOn }}
+          style={styles.musicToggle}
+          onPress={toggleMusic}
+        >
+          <Text style={styles.voiceText}>Background music: {musicOn ? 'On' : 'Off'}</Text>
         </Pressable>
       </View>
     </View>
@@ -826,5 +881,6 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: TEXT, fontSize: 18, fontWeight: '800' },
   voiceToggle: { marginTop: 14, paddingVertical: 10, paddingHorizontal: 16 },
+  musicToggle: { paddingVertical: 10, paddingHorizontal: 16 },
   voiceText: { color: MUTED, fontSize: 14, fontWeight: '600' },
 });
