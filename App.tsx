@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import Svg, { Circle, Line, Path, Polygon, Polyline, Rect } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Polygon, Rect } from 'react-native-svg';
 import { createAudioPlayer, preload, type AudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SPRITE, SPRITE_SRC } from './voiceSprite';
@@ -19,7 +19,7 @@ const MUSIC_KEY = 'breathgym.music';
 // Timings are placeholders until Brandon confirms his own patterns.
 // ---------------------------------------------------------------------------
 type Step = { label: string; seconds: number; move: 'grow' | 'shrink' | 'stay' };
-type IconName = 'target' | 'wave' | 'bolt' | 'battery' | 'refresh' | 'moon' | 'sliders';
+type IconName = 'target' | 'wave' | 'bolt' | 'battery' | 'moon' | 'sliders';
 // Seconds for each part of one breath: in, hold, out, hold. 0 means that part is skipped.
 type Counts = { in: number; hold1: number; out: number; hold2: number };
 type Exercise = {
@@ -55,14 +55,14 @@ const make = (p: Preset): Exercise => {
   return { ...p, steps: stepsOf(c), pattern: patternOf(c) };
 };
 
-// counts = [in, hold, out, hold] in seconds, from Brandon (2026-11-26).
+// counts = [in, hold, out, hold] in seconds, from Brandon (2026-11-26, updated 2026-11-27).
 const EXERCISES: Exercise[] = [
-  make({ id: 'focused', name: 'Focused', tagline: 'Lock in before a big moment', icon: 'target', color: '#4DA3FF', counts: [4, 4, 4, 4] }),
-  make({ id: 'calm', name: 'Calm', tagline: 'Settle your nerves under pressure', icon: 'wave', color: '#3DD6C3', counts: [4, 2, 6, 0] }),
+  make({ id: 'focused', name: 'Focused', tagline: 'Lock in', icon: 'target', color: '#4DA3FF', counts: [4, 4, 4, 4] }),
+  make({ id: 'calm', name: 'Calm', tagline: 'Settle your nerves', icon: 'wave', color: '#3DD6C3', counts: [4, 2, 6, 0] }),
   make({
     id: 'energized',
     name: 'Energized',
-    tagline: 'Wake up before you compete',
+    tagline: 'Wake up',
     icon: 'bolt',
     color: '#FF8A3D',
     counts: [3, 1, 3, 0],
@@ -71,11 +71,10 @@ const EXERCISES: Exercise[] = [
     startSeconds: 30,
     note: 'Sit tall. Stop if you feel dizzy.',
   }),
-  make({ id: 'recovered', name: 'Recovered', tagline: 'Wind down after a game', icon: 'battery', color: '#9B8CFF', counts: [5, 0, 5, 1] }),
-  make({ id: 'reset', name: 'Reset', tagline: 'Let go after a mistake', icon: 'refresh', color: '#F472B6', counts: [3, 2, 6, 0] }),
+  make({ id: 'recovered', name: 'Recovered', tagline: 'Reset and recharge', icon: 'battery', color: '#9B8CFF', counts: [4, 2, 7, 2] }),
   // Brandon's table has 4-7-8. The hold is shortened to 4 for young athletes; change the
   // second number to 7 for the full version.
-  make({ id: 'rested', name: 'Rested', tagline: 'Slow down before bed', icon: 'moon', color: '#F5C451', counts: [4, 4, 8, 0] }),
+  make({ id: 'rested', name: 'Rested', tagline: 'Wind down for sleep', icon: 'moon', color: '#F5C451', counts: [4, 4, 8, 0] }),
 ];
 
 // "Pick your own": the athlete sets the count for each part of the breath.
@@ -121,12 +120,6 @@ function Icon({ name, color, size = 22 }: { name: IconName; color: string; size?
           <Line x1={13} y1={10} x2={13} y2={14} {...line} />
         </>
       )}
-      {name === 'refresh' && (
-        <>
-          <Polyline points="23 4 23 10 17 10" {...line} />
-          <Path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" {...line} />
-        </>
-      )}
       {name === 'moon' && <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" {...line} />}
       {name === 'sliders' && (
         <>
@@ -145,7 +138,12 @@ const DURATIONS = [
   { label: '1 min', seconds: 60 },
   { label: '3 min', seconds: 180 },
   { label: '5 min', seconds: 300 },
+  { label: '10 min', seconds: 600 },
 ];
+// "Custom" length: the athlete picks any whole number of minutes in this range.
+const CUSTOM_MIN = 1;
+const CUSTOM_MAX = 30;
+const CUSTOM_START = 15;
 
 const BG = '#070F24';
 const CARD = '#101B3A';
@@ -246,18 +244,14 @@ function Home({
               <Text style={styles.cardTag}>{e.tagline}</Text>
             </Pressable>
           ))}
-        </View>
-
-        <Pressable accessibilityRole="button" style={styles.custom} onPress={onCustom}>
-          <View style={[styles.iconChip, { backgroundColor: CUSTOM_COLOR + '26', marginBottom: 0 }]}>
-            <Icon name="sliders" color={CUSTOM_COLOR} />
-          </View>
-          <View style={{ flex: 1 }}>
+          <Pressable accessibilityRole="button" style={styles.card} onPress={onCustom}>
+            <View style={[styles.iconChip, { backgroundColor: CUSTOM_COLOR + '26' }]}>
+              <Icon name="sliders" color={CUSTOM_COLOR} />
+            </View>
             <Text style={styles.cardName}>Pick your own</Text>
             <Text style={styles.cardTag}>Set your own breath count</Text>
-          </View>
-          <Text style={styles.customGo}>›</Text>
-        </Pressable>
+          </Pressable>
+        </View>
 
         <Text style={styles.beta}>Beta · your streak saves on this device</Text>
       </View>
@@ -268,13 +262,13 @@ function Home({
 // ---------------------------------------------------------------------------
 // Pick your own: set the seconds for each part of the breath.
 // ---------------------------------------------------------------------------
-const COUNT_ROWS: { key: keyof Counts; label: string; min: number }[] = [
-  { key: 'in', label: 'Breathe in', min: 2 },
-  { key: 'hold1', label: 'Hold', min: 0 },
-  { key: 'out', label: 'Breathe out', min: 2 },
-  { key: 'hold2', label: 'Hold', min: 0 },
+// Breathing in and out can go up to 12 seconds; holds stay capped at 10.
+const COUNT_ROWS: { key: keyof Counts; label: string; min: number; max: number }[] = [
+  { key: 'in', label: 'Breathe in', min: 2, max: 12 },
+  { key: 'hold1', label: 'Hold', min: 0, max: 10 },
+  { key: 'out', label: 'Breathe out', min: 2, max: 12 },
+  { key: 'hold2', label: 'Hold', min: 0, max: 10 },
 ];
-const MAX_COUNT = 10;
 const BAR_PARTS: { key: keyof Counts; color: string }[] = [
   { key: 'in', color: '#4DA3FF' },
   { key: 'hold1', color: '#D9A441' },
@@ -294,7 +288,7 @@ function CustomSetup({
   onStart: () => void;
 }) {
   return (
-    <View style={styles.session}>
+    <ScrollView contentContainerStyle={styles.session}>
       <View style={styles.column}>
         <View style={styles.topBar}>
           <Pressable accessibilityRole="button" accessibilityLabel="Back" style={styles.back} onPress={onBack}>
@@ -325,8 +319,8 @@ function CustomSetup({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`More ${row.label}`}
-                disabled={value >= MAX_COUNT}
-                style={[styles.stepBtn, value >= MAX_COUNT && styles.stepBtnOff]}
+                disabled={value >= row.max}
+                style={[styles.stepBtn, value >= row.max && styles.stepBtnOff]}
                 onPress={() => set(value + 1)}
               >
                 <Text style={styles.stepBtnText}>+</Text>
@@ -365,7 +359,7 @@ function CustomSetup({
           <Text style={styles.buttonText}>Continue</Text>
         </Pressable>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -386,6 +380,15 @@ function Session({
   const [duration, setDuration] = useState(exercise.startSeconds ?? 60);
   const [status, setStatus] = useState<'ready' | 'running' | 'done'>('ready');
   const [elapsed, setElapsed] = useState(0);
+  const maxSeconds = exercise.maxSeconds ?? CUSTOM_MAX * 60;
+  const [customOn, setCustomOn] = useState(false);
+  const [customMin, setCustomMin] = useState(CUSTOM_START);
+  const pickCustom = (minutes: number) => {
+    setCustomOn(true);
+    setCustomMin(minutes);
+    setDuration(minutes * 60);
+    if (status === 'done') setStatus('ready');
+  };
   const startedAt = useRef(0);
   const lastStep = useRef(-1);
   const size = useRef(new Animated.Value(SMALL)).current;
@@ -564,18 +567,19 @@ function Session({
     schedule.current = [];
     rest(); // back to the small circle before the first breath in
     if (voiceOn) {
-      const tSetup = (SPRITE[announceKey]?.[1] ?? 0) + 0.4;
+      // 10 minutes and custom lengths have no recorded announcement yet, so those start
+      // on the get-ready line.
+      const announce = SPRITE[announceKey];
+      const tSetup = announce ? announce[1] + 0.4 : 0;
       const tTones = tSetup + SPRITE.setup[1] + 0.3;
       const tIntro = tTones + tonesLen + 0.4;
       const intro = SPRITE[introKey];
       lead = tIntro + (intro ? intro[1] + 0.6 : 0);
-      schedule.current = [
-        { at: tSetup - lead, clip: 'setup' },
-        { at: tTones - lead, clip: 'tones' },
-      ];
+      schedule.current = [{ at: tTones - lead, clip: 'tones' }];
+      if (announce) schedule.current.unshift({ at: tSetup - lead, clip: 'setup' });
       if (intro) schedule.current.push({ at: tIntro - lead, clip: introKey });
       setTonesAt(tTones - lead);
-      say(announceKey); // played inside the tap, which is what unlocks sound on phones
+      say(announce ? announceKey : 'setup'); // played inside the tap, which is what unlocks sound on phones
     }
     if (musicOn) playMusic();
     startedAt.current = Date.now() + lead * 1000;
@@ -598,7 +602,7 @@ function Session({
   const breaths = Math.floor(Math.max(0, elapsed) / cycle);
 
   return (
-    <View style={styles.session}>
+    <ScrollView contentContainerStyle={styles.session}>
       <View style={styles.column}>
         <View style={styles.topBar}>
           <Pressable
@@ -688,8 +692,8 @@ function Session({
 
         {status !== 'running' && (
           <View style={styles.chips}>
-            {DURATIONS.filter((d) => d.seconds <= (exercise.maxSeconds ?? 300)).map((d) => {
-              const on = d.seconds === duration;
+            {DURATIONS.filter((d) => d.seconds <= maxSeconds).map((d) => {
+              const on = !customOn && d.seconds === duration;
               return (
                 <Pressable
                   key={d.seconds}
@@ -697,6 +701,7 @@ function Session({
                   accessibilityState={{ selected: on }}
                   style={[styles.chip, on && { borderColor: exercise.color, backgroundColor: CARD }]}
                   onPress={() => {
+                    setCustomOn(false);
                     setDuration(d.seconds);
                     if (status === 'done') setStatus('ready');
                   }}
@@ -705,6 +710,39 @@ function Session({
                 </Pressable>
               );
             })}
+            {maxSeconds >= CUSTOM_MAX * 60 && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: customOn }}
+                style={[styles.chip, customOn && { borderColor: exercise.color, backgroundColor: CARD }]}
+                onPress={() => pickCustom(customMin)}
+              >
+                <Text style={[styles.chipText, customOn && { color: TEXT }]}>Custom</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+        {status !== 'running' && customOn && (
+          <View style={styles.lengthRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Fewer minutes"
+              disabled={customMin <= CUSTOM_MIN}
+              style={[styles.stepBtn, customMin <= CUSTOM_MIN && styles.stepBtnOff]}
+              onPress={() => pickCustom(customMin - 1)}
+            >
+              <Text style={styles.stepBtnText}>−</Text>
+            </Pressable>
+            <Text style={styles.lengthValue}>{customMin} min</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="More minutes"
+              disabled={customMin >= CUSTOM_MAX}
+              style={[styles.stepBtn, customMin >= CUSTOM_MAX && styles.stepBtnOff]}
+              onPress={() => pickCustom(customMin + 1)}
+            >
+              <Text style={styles.stepBtnText}>+</Text>
+            </Pressable>
           </View>
         )}
 
@@ -748,7 +786,7 @@ function Session({
           </View>
         </View>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -865,17 +903,6 @@ const styles = StyleSheet.create({
   },
   cardName: { color: TEXT, fontSize: 18, fontWeight: '800' },
   cardTag: { color: MUTED, fontSize: 13, marginTop: 4 },
-  custom: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: CARD,
-    borderRadius: 18,
-    padding: 16,
-    marginTop: 12,
-  },
-  customGo: { color: MUTED, fontSize: 30, fontWeight: '300' },
   beta: { color: MUTED, fontSize: 12, marginTop: 24, opacity: 0.7, textAlign: 'center' },
 
   setupHelp: { color: MUTED, fontSize: 15, marginTop: 28, marginBottom: 12, textAlign: 'center' },
@@ -915,7 +942,8 @@ const styles = StyleSheet.create({
   summaryValue: { color: TEXT, fontSize: 17, fontWeight: '800', marginTop: 2, fontVariant: ['tabular-nums'] },
   stepBtnText: { color: TEXT, fontSize: 24, fontWeight: '600', lineHeight: 28 },
 
-  session: { flex: 1, padding: 20, paddingTop: 24 },
+  // Scrolls, so the switches stay reachable on short screens.
+  session: { padding: 20, paddingTop: 24, paddingBottom: 32 },
   topBar: {
     width: '100%',
     flexDirection: 'row',
@@ -953,7 +981,16 @@ const styles = StyleSheet.create({
   pattern: { color: MUTED, fontSize: 14, marginTop: 20 },
   note: { color: MUTED, fontSize: 13, marginTop: 14, textAlign: 'center' },
 
-  chips: { flexDirection: 'row', gap: 8, marginTop: 18 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 18 },
+  lengthRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 },
+  lengthValue: {
+    color: TEXT,
+    fontSize: 18,
+    fontWeight: '800',
+    width: 84,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
   chip: {
     borderWidth: 1.5,
     borderColor: '#24325C',

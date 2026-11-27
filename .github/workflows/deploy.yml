@@ -14,12 +14,12 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Build and deploy are separate jobs on purpose. In one job, the deploy step asked for the
+# uploaded site less than a second after the upload finished, and now and then GitHub
+# answered "no artifacts found" and the run failed.
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,5 +36,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
